@@ -1,325 +1,747 @@
-// ====================================
-// MGTOKYO品川 メンテナンス管理システム
-// ====================================
-
-// 設定
-const CONFIG = {
-  // カレンダーID
-  CUSTOMER_CALENDAR_ID: 'khjrlhs0ib100i37t3nglg1n9g@group.calendar.google.com',
-  MAINTENANCE_CALENDAR_ID: 'f15a88b8e57c199598589f28bd7c0619a902d65850b6987bbec707bccfb0bdf0@group.calendar.google.com',
-  
-  // タイムゾーン
-  TIMEZONE: 'Asia/Tokyo'
-};
-
-// ====================================
-// Web APIエンドポイント
-// ====================================
-
-function doGet(e) {
-  const action = e.parameter.action;
-  const date = e.parameter.date; // 'today' or 'tomorrow'
-  
-  try {
-    switch(action) {
-      case 'getSchedule':
-        return createJsonResponse(getSchedule(date));
-        
-      default:
-        return createJsonResponse({ error: 'Invalid action' }, 400);
-    }
-  } catch (error) {
-    Logger.log('Error in doGet: ' + error.toString());
-    return createJsonResponse({ error: error.toString() }, 500);
-  }
-}
-
-function doPost(e) {
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const action = data.action;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#16a34a">
+    <title>メンテナンス時間管理 - MGTOKYO品川</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .animate-slide-up {
+            animation: slideUp 0.3s ease-out;
+        }
+        .loading-spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #16a34a;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="app">
+        <div class="flex items-center justify-center min-h-screen">
+            <div class="text-center">
+                <div class="loading-spinner mx-auto mb-4"></div>
+                <p class="text-gray-600">読み込み中...</p>
+            </div>
+        </div>
+    </div>
     
-    switch(action) {
-      case 'createMaintenance':
-        const result = createMaintenance(data.date, data.startTime, data.endTime, data.cleanerName);
-        return createJsonResponse(result);
+    <script>
+        // ========================================
+        // 設定
+        // ========================================
+        const CONFIG = {
+            GAS_API_URL: 'https://script.google.com/macros/s/AKfycbyEWm7vORtbq7MqUdb-DFITvfT_lxwaaH9n_g7li1Exdx7IqSsNjQEZdTtQ-v11pJKm/exec',
+            // ユーザー情報
+            USERS: [
+                { username: 'kibousen', password: 'kibousen2024', name: 'takako-san' },
+                { username: 'staff2', password: 'staff2024', name: 'スタッフ2' },
+                { username: 'admin', password: 'mgtokyo2024', name: '管理者' }
+            ]
+        };
         
-      case 'completeMaintenance':
-        const completeResult = completeMaintenance(data.eventId);
-        return createJsonResponse(completeResult);
+        // グローバル変数
+        let currentUser = null;
+        let currentDate = 'today';
+        let scheduleData = [];
+        let selectedBookingDate = 'today';
         
-      case 'cancelMaintenance':
-        const cancelResult = cancelMaintenance(data.eventId);
-        return createJsonResponse(cancelResult);
+        // ========================================
+        // 初期化
+        // ========================================
+        function init() {
+            console.log('アプリ初期化開始...');
+            checkLogin();
+        }
         
-      default:
-        return createJsonResponse({ error: 'Invalid action' }, 400);
-    }
-  } catch (error) {
-    Logger.log('Error in doPost: ' + error.toString());
-    return createJsonResponse({ error: error.toString() }, 500);
-  }
-}
+        // ========================================
+        // ログイン確認
+        // ========================================
+        function checkLogin() {
+            const savedUser = localStorage.getItem('currentUser');
+            if (savedUser) {
+                currentUser = JSON.parse(savedUser);
+                console.log('ログイン済み:', currentUser.name);
+                renderApp();
+                loadSchedule('today');
+            } else {
+                console.log('未ログイン - ログイン画面を表示');
+                renderLoginScreen();
+            }
+        }
+        
+        // ========================================
+        // ログイン画面
+        // ========================================
+        function renderLoginScreen() {
+            document.getElementById('app').innerHTML = `
+                <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-green-50 to-green-100">
+                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                        <!-- ヘッダー -->
+                        <div class="bg-gradient-to-r from-green-600 to-green-700 text-white p-8 text-center">
+                            <svg class="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                            </svg>
+                            <h1 class="text-2xl font-bold">メンテナンス時間管理</h1>
+                            <p class="text-green-100 text-sm mt-2">MGTOKYO品川</p>
+                        </div>
+                        
+                        <!-- ログインフォーム -->
+                        <div class="p-8">
+                            <h2 class="text-xl font-bold text-gray-800 mb-6 text-center">ログイン</h2>
+                            
+                            <div id="login-error" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+                            </div>
+                            
+                            <form onsubmit="handleLogin(event)" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700 mb-2">ユーザー名</label>
+                                    <input 
+                                        type="text" 
+                                        id="username" 
+                                        required
+                                        autocomplete="username"
+                                        class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none text-base"
+                                        placeholder="ユーザー名を入力"
+                                    >
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700 mb-2">パスワード</label>
+                                    <input 
+                                        type="password" 
+                                        id="password" 
+                                        required
+                                        autocomplete="current-password"
+                                        class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none text-base"
+                                        placeholder="パスワードを入力"
+                                    >
+                                </div>
+                                
+                                <button 
+                                    type="submit" 
+                                    class="w-full bg-gradient-to-r from-green-600 to-green-700 text-white py-4 rounded-xl font-bold hover:from-green-700 hover:to-green-800 transition-all shadow-lg hover:shadow-xl"
+                                >
+                                    ログイン
+                                </button>
+                            </form>
+                            
+                            <!-- テストアカウント情報 -->
+                            <div class="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <p class="text-xs text-gray-600 font-bold mb-2">ログインアカウント</p>
+                                <div class="text-xs text-gray-600 space-y-1">
+                                    <p>清掃員1: kibousen / kibousen2024</p>
+                                    <p>清掃員2: staff2 / staff2024</p>
+                                    <p>管理者: admin / mgtokyo2024</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // ========================================
+        // ログイン処理
+        // ========================================
+        function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            
+            const user = CONFIG.USERS.find(function(u) {
+                return u.username === username && u.password === password;
+            });
+            
+            if (user) {
+                currentUser = { username: user.username, name: user.name };
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                console.log('ログイン成功:', currentUser.name);
+                renderApp();
+                loadSchedule('today');
+            } else {
+                const errorDiv = document.getElementById('login-error');
+                errorDiv.textContent = 'ユーザー名またはパスワードが正しくありません';
+                errorDiv.className = 'bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm';
+            }
+        }
+        
+        // ========================================
+        // ログアウト
+        // ========================================
+        function handleLogout() {
+            if (confirm('ログアウトしますか？')) {
+                localStorage.removeItem('currentUser');
+                currentUser = null;
+                renderLoginScreen();
+            }
+        }
+        
+        // ========================================
+        // スケジュール読み込み
+        // ========================================
+        async function loadSchedule(dateType) {
+            try {
+                showLoading();
+                currentDate = dateType;
+                
+                console.log('スケジュール取得開始:', dateType);
+                const response = await fetch(CONFIG.GAS_API_URL + '?action=getSchedule&date=' + dateType);
+                const data = await response.json();
+                console.log('スケジュール取得完了:', data);
+                
+                if (data.success) {
+                    scheduleData = data.schedule;
+                    renderSchedule(data.schedule, data.date, dateType);
+                } else {
+                    throw new Error('スケジュールの取得に失敗しました');
+                }
+            } catch (error) {
+                console.error('スケジュール取得エラー:', error);
+                showError('スケジュールの取得に失敗しました: ' + error.message);
+            }
+        }
+        
+        // ========================================
+        // メンテナンス予約作成
+        // ========================================
+        async function createMaintenance(dateType, startTime, endTime) {
+            try {
+                showLoading();
+                
+                console.log('メンテナンス予約作成:', { dateType, startTime, endTime, user: currentUser.name });
+                const response = await fetch(CONFIG.GAS_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'createMaintenance',
+                        date: dateType,
+                        startTime: startTime,
+                        endTime: endTime,
+                        cleanerName: currentUser.name
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('予約作成完了:', data);
+                
+                if (data.success) {
+                    alert('メンテナンス予約を作成しました');
+                    await loadSchedule(currentDate);
+                    closeModal();
+                } else {
+                    throw new Error(data.error || '予約の作成に失敗しました');
+                }
+            } catch (error) {
+                console.error('予約作成エラー:', error);
+                showError('予約の作成に失敗しました: ' + error.message);
+            }
+        }
+        
+        // ========================================
+        // メンテナンス完了
+        // ========================================
+        async function completeMaintenance(eventId) {
+            try {
+                showLoading();
+                
+                console.log('メンテナンス完了:', eventId);
+                const response = await fetch(CONFIG.GAS_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'completeMaintenance',
+                        eventId: eventId
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('完了報告完了:', data);
+                
+                if (data.success) {
+                    alert('メンテナンス完了を報告しました');
+                    await loadSchedule(currentDate);
+                    closeModal();
+                } else {
+                    throw new Error(data.error || '完了報告に失敗しました');
+                }
+            } catch (error) {
+                console.error('完了報告エラー:', error);
+                showError('完了報告に失敗しました: ' + error.message);
+            }
+        }
+        
+        // ========================================
+        // メンテナンスキャンセル
+        // ========================================
+        async function cancelMaintenance(eventId) {
+            try {
+                showLoading();
+                
+                console.log('メンテナンスキャンセル:', eventId);
+                const response = await fetch(CONFIG.GAS_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'cancelMaintenance',
+                        eventId: eventId
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('キャンセル完了:', data);
+                
+                if (data.success) {
+                    alert('メンテナンス予約をキャンセルしました');
+                    await loadSchedule(currentDate);
+                    closeModal();
+                } else {
+                    throw new Error(data.error || 'キャンセルに失敗しました');
+                }
+            } catch (error) {
+                console.error('キャンセルエラー:', error);
+                showError('キャンセルに失敗しました: ' + error.message);
+            }
+        }
+        
+        // ========================================
+        // UI描画
+        // ========================================
+        function renderApp() {
+            const currentTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+            
+            document.getElementById('app').innerHTML = `
+                <div class="max-w-md mx-auto min-h-screen pb-20">
+                    <!-- Header -->
+                    <div class="bg-gradient-to-r from-green-600 to-green-700 text-white p-5 shadow-lg">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <h1 class="text-2xl font-bold">メンテナンス時間管理</h1>
+                                <p class="text-sm text-green-100 mt-1">MGTOKYO品川</p>
+                            </div>
+                            <div class="bg-white bg-opacity-20 rounded-full p-3">
+                                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="bg-white bg-opacity-20 rounded-lg p-3 backdrop-blur-sm">
+                            <div class="flex items-center justify-between text-sm">
+                                <div class="flex items-center space-x-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                                    </svg>
+                                    <span class="font-medium">${currentUser.name}</span>
+                                </div>
+                                <button onclick="handleLogout()" class="text-xs bg-white bg-opacity-20 px-3 py-1 rounded-full hover:bg-opacity-30 transition-all">
+                                    ログアウト
+                                </button>
+                            </div>
+                            <div class="flex items-center justify-between text-sm mt-2 pt-2 border-t border-white border-opacity-20">
+                                <span>現在時刻</span>
+                                <span class="text-lg font-bold">${currentTime}</span>
+                            </div>
+                        </div>
+                    </div>
 
-// ====================================
-// スケジュール取得
-// ====================================
+                    <!-- Tabs -->
+                    <div class="flex bg-white shadow-sm border-b" id="date-tabs"></div>
 
-function getSchedule(dateType) {
-  const targetDate = getTargetDate(dateType);
-  const dayStart = new Date(targetDate);
-  dayStart.setHours(0, 0, 0, 0);
-  
-  const dayEnd = new Date(targetDate);
-  dayEnd.setHours(23, 59, 59, 999);
-  
-  // お客様予約を取得
-  const customerCalendar = CalendarApp.getCalendarById(CONFIG.CUSTOMER_CALENDAR_ID);
-  const customerEvents = customerCalendar.getEvents(dayStart, dayEnd);
-  
-  // メンテナンス予約を取得
-  const maintenanceCalendar = CalendarApp.getCalendarById(CONFIG.MAINTENANCE_CALENDAR_ID);
-  const maintenanceEvents = maintenanceCalendar.getEvents(dayStart, dayEnd);
-  
-  const schedule = [];
-  
-  // お客様予約を追加
-  customerEvents.forEach(function(event) {
-    schedule.push({
-      id: event.getId(),
-      type: 'customer',
-      startTime: formatTime(event.getStartTime()),
-      endTime: formatTime(event.getEndTime()),
-      title: event.getTitle()
-    });
-  });
-  
-  // メンテナンス予約を追加
-  maintenanceEvents.forEach(function(event) {
-    const description = event.getDescription() || '';
-    const status = description.includes('完了') ? 'completed' : 'scheduled';
-    
-    schedule.push({
-      id: event.getId(),
-      type: 'cleaning',
-      startTime: formatTime(event.getStartTime()),
-      endTime: formatTime(event.getEndTime()),
-      status: status,
-      cleanerName: extractCleanerName(description),
-      notes: extractNotes(description)
-    });
-  });
-  
-  // 時刻順にソート
-  schedule.sort(function(a, b) {
-    return a.startTime.localeCompare(b.startTime);
-  });
-  
-  return {
-    success: true,
-    date: formatDate(targetDate),
-    schedule: schedule
-  };
-}
+                    <!-- Content -->
+                    <div class="p-4" id="content-area">
+                        <div class="text-center py-8">
+                            <div class="loading-spinner mx-auto mb-4"></div>
+                            <p class="text-gray-600">読み込み中...</p>
+                        </div>
+                    </div>
 
-// ====================================
-// メンテナンス予約作成
-// ====================================
+                    <!-- 追加ボタン -->
+                    <div class="fixed bottom-8 right-8 z-40">
+                        <button onclick="openBookingModal()" class="bg-gradient-to-r from-green-600 to-green-700 text-white w-20 h-20 rounded-full shadow-2xl hover:shadow-3xl transition-all flex items-center justify-center hover:scale-110 border-4 border-white">
+                            <span class="text-4xl font-bold leading-none">+</span>
+                        </button>
+                    </div>
 
-function createMaintenance(dateType, startTime, endTime, cleanerName) {
-  const targetDate = getTargetDate(dateType);
-  
-  // 日付と時刻を結合
-  const startDateTime = parseDateTime(targetDate, startTime);
-  const endDateTime = parseDateTime(targetDate, endTime);
-  
-  // 重複チェック
-  const conflict = checkTimeConflict(startDateTime, endDateTime);
-  if (conflict) {
-    return {
-      success: false,
-      error: conflict.message
-    };
-  }
-  
-  // メンテナンスカレンダーに予約を作成
-  const maintenanceCalendar = CalendarApp.getCalendarById(CONFIG.MAINTENANCE_CALENDAR_ID);
-  
-  const event = maintenanceCalendar.createEvent(
-    'メンテナンス',
-    startDateTime,
-    endDateTime,
-    {
-      description: 'ステータス: 予約済み\n担当者: ' + (cleanerName || '未設定'),
-      colorId: CalendarApp.EventColor.PURPLE
-    }
-  );
-  
-  Logger.log('メンテナンス予約作成: ' + event.getId());
-  
-  return {
-    success: true,
-    eventId: event.getId(),
-    message: 'メンテナンス予約を作成しました'
-  };
-}
-
-// ====================================
-// 時間重複チェック
-// ====================================
-
-function checkTimeConflict(startDateTime, endDateTime) {
-  // お客様予約との重複チェック
-  const customerCalendar = CalendarApp.getCalendarById(CONFIG.CUSTOMER_CALENDAR_ID);
-  const customerEvents = customerCalendar.getEvents(startDateTime, endDateTime);
-  
-  if (customerEvents.length > 0) {
-    const conflictEvent = customerEvents[0];
-    return {
-      message: 'お客様予約と重複しています（' + 
-               formatTime(conflictEvent.getStartTime()) + '-' + 
-               formatTime(conflictEvent.getEndTime()) + '）'
-    };
-  }
-  
-  // 既存のメンテナンス予約との重複チェック
-  const maintenanceCalendar = CalendarApp.getCalendarById(CONFIG.MAINTENANCE_CALENDAR_ID);
-  const maintenanceEvents = maintenanceCalendar.getEvents(startDateTime, endDateTime);
-  
-  if (maintenanceEvents.length > 0) {
-    const conflictEvent = maintenanceEvents[0];
-    return {
-      message: 'すでにメンテナンス予約が入っています（' + 
-               formatTime(conflictEvent.getStartTime()) + '-' + 
-               formatTime(conflictEvent.getEndTime()) + '）'
-    };
-  }
-  
-  return null;
-}
-
-// ====================================
-// メンテナンス完了記録
-// ====================================
-
-function completeMaintenance(eventId) {
-  const maintenanceCalendar = CalendarApp.getCalendarById(CONFIG.MAINTENANCE_CALENDAR_ID);
-  const event = maintenanceCalendar.getEventById(eventId);
-  
-  if (!event) {
-    throw new Error('イベントが見つかりません');
-  }
-  
-  // 現在の説明文を取得して担当者を保持
-  const currentDescription = event.getDescription() || '';
-  const cleanerName = extractCleanerName(currentDescription);
-  
-  // 説明文を更新
-  const now = new Date();
-  const description = 'ステータス: 完了\n完了時刻: ' + formatDateTime(now) + '\n担当者: ' + cleanerName;
-  
-  event.setDescription(description);
-  event.setColor(CalendarApp.EventColor.GREEN);
-  event.setTitle('メンテナンス完了');
-  
-  Logger.log('メンテナンス完了記録: ' + eventId);
-  
-  return {
-    success: true,
-    message: 'メンテナンス完了を記録しました'
-  };
-}
-
-// ====================================
-// メンテナンス予約キャンセル
-// ====================================
-
-function cancelMaintenance(eventId) {
-  const maintenanceCalendar = CalendarApp.getCalendarById(CONFIG.MAINTENANCE_CALENDAR_ID);
-  const event = maintenanceCalendar.getEventById(eventId);
-  
-  if (!event) {
-    throw new Error('イベントが見つかりません');
-  }
-  
-  event.deleteEvent();
-  
-  Logger.log('メンテナンス予約キャンセル: ' + eventId);
-  
-  return {
-    success: true,
-    message: 'メンテナンス予約をキャンセルしました'
-  };
-}
-
-// ====================================
-// ユーティリティ関数
-// ====================================
-
-function getTargetDate(dateType) {
-  const now = new Date();
-  
-  if (dateType === 'tomorrow') {
-    now.setDate(now.getDate() + 1);
-  }
-  
-  return now;
-}
-
-function parseDateTime(date, timeString) {
-  const timeParts = timeString.split(':');
-  const hours = parseInt(timeParts[0]);
-  const minutes = parseInt(timeParts[1]);
-  const result = new Date(date);
-  result.setHours(hours, minutes, 0, 0);
-  return result;
-}
-
-function formatTime(date) {
-  return Utilities.formatDate(date, CONFIG.TIMEZONE, 'HH:mm');
-}
-
-function formatDate(date) {
-  return Utilities.formatDate(date, CONFIG.TIMEZONE, 'yyyy年MM月dd日（E）');
-}
-
-function formatDateTime(date) {
-  return Utilities.formatDate(date, CONFIG.TIMEZONE, 'yyyy年MM月dd日 HH:mm');
-}
-
-function extractCleanerName(description) {
-  const match = description.match(/担当者?:\s*(.+?)(?:\n|$)/);
-  return match ? match[1].trim() : '未設定';
-}
-
-function extractNotes(description) {
-  const match = description.match(/備考:\s*(.+)/);
-  return match ? match[1].trim() : '';
-}
-
-function createJsonResponse(data, statusCode) {
-  const output = ContentService.createTextOutput(JSON.stringify(data));
-  output.setMimeType(ContentService.MimeType.JSON);
-  return output;
-}
-
-// ====================================
-// テスト用関数
-// ====================================
-
-function testGetSchedule() {
-  const result = getSchedule('today');
-  Logger.log(JSON.stringify(result, null, 2));
-}
-
-function testCreateMaintenance() {
-  const result = createMaintenance('today', '14:00', '15:00', '希望泉');
-  Logger.log(JSON.stringify(result, null, 2));
-}
-
-function testCompleteMaintenance() {
-  // 実際のイベントIDに置き換えてテスト
-  const eventId = 'your_event_id_here';
-  const result = completeMaintenance(eventId);
-  Logger.log(JSON.stringify(result, null, 2));
-}
+                    <!-- Modal -->
+                    <div id="modal" class="hidden"></div>
+                </div>
+            `;
+        }
+        
+        function renderSchedule(schedule, dateText, dateType) {
+            const tabs = `
+                <button onclick="switchTab('today')" class="flex-1 py-3 text-center font-bold transition-all relative ${dateType === 'today' ? 'text-green-600' : 'text-gray-400'}">
+                    <div class="flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-sm">${getTodayText()}</span>
+                    </div>
+                    ${dateType === 'today' ? '<div class="absolute bottom-0 left-0 right-0 h-1 bg-green-600 rounded-t"></div>' : ''}
+                </button>
+                <button onclick="switchTab('tomorrow')" class="flex-1 py-3 text-center font-bold transition-all relative ${dateType === 'tomorrow' ? 'text-green-600' : 'text-gray-400'}">
+                    <div class="flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-sm">${getTomorrowText()}</span>
+                    </div>
+                    ${dateType === 'tomorrow' ? '<div class="absolute bottom-0 left-0 right-0 h-1 bg-green-600 rounded-t"></div>' : ''}
+                </button>
+            `;
+            
+            document.getElementById('date-tabs').innerHTML = tabs;
+            
+            let html = '<div class="space-y-2">';
+            
+            if (schedule.length === 0) {
+                html += `
+                    <div class="text-center py-16">
+                        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <p class="text-gray-400 font-medium">予定はありません</p>
+                    </div>
+                `;
+            } else {
+                schedule.forEach(function(slot) {
+                    const duration = calculateDuration(slot.startTime, slot.endTime);
+                    
+                    if (slot.type === 'customer') {
+                        html += `
+                            <div class="bg-blue-100 border-2 border-blue-300 rounded-lg p-4 shadow-sm">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center space-x-2">
+                                        <svg class="w-5 h-5 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                                        </svg>
+                                        <span class="font-bold text-blue-900">お客様予約</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center space-x-2 text-blue-800">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    <span class="font-bold">${slot.startTime} - ${slot.endTime}</span>
+                                    <span class="text-sm">(${duration}分)</span>
+                                </div>
+                            </div>
+                        `;
+                    } else if (slot.type === 'cleaning') {
+                        const isCompleted = slot.status === 'completed';
+                        const bgColor = isCompleted ? 'bg-green-100 border-green-300' : 'bg-purple-100 border-purple-300';
+                        const textColor = isCompleted ? 'text-green-700' : 'text-purple-700';
+                        const textColor900 = isCompleted ? 'text-green-900' : 'text-purple-900';
+                        const textColor800 = isCompleted ? 'text-green-800' : 'text-purple-800';
+                        const badgeColor = isCompleted ? 'bg-green-200 text-green-800' : 'bg-purple-200 text-purple-800';
+                        
+                        html += `
+                            <div onclick="openMaintenanceDetail('${slot.id}')" class="${bgColor} border-2 rounded-lg p-4 shadow-sm cursor-pointer hover:shadow-md transition-all">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center space-x-2">
+                                        <svg class="w-5 h-5 ${textColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                                        </svg>
+                                        <span class="font-bold ${textColor900}">メンテナンス予約</span>
+                                    </div>
+                                    <span class="text-xs px-3 py-1 rounded-full font-bold ${badgeColor}">
+                                        ${isCompleted ? '✓ 完了' : '予約済'}
+                                    </span>
+                                </div>
+                                <div class="flex items-center space-x-2 mb-2 ${textColor800}">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    <span class="font-bold">${slot.startTime} - ${slot.endTime}</span>
+                                    <span class="text-sm">(${duration}分)</span>
+                                </div>
+                                <div class="text-xs text-gray-600">
+                                    担当: ${slot.cleanerName || '未設定'}
+                                    ${slot.notes ? ' / ' + slot.notes : ''}
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
+            }
+            
+            html += '</div>';
+            document.getElementById('content-area').innerHTML = html;
+        }
+        
+        // ========================================
+        // モーダル
+        // ========================================
+        function openBookingModal() {
+            selectedBookingDate = 'today';
+            const modal = document.getElementById('modal');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-60 flex items-end justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-t-3xl w-full max-w-md animate-slide-up shadow-2xl">
+                    <div class="h-2 bg-gradient-to-r from-green-500 to-green-600 rounded-t-3xl"></div>
+                    <div class="p-6">
+                        <div class="flex justify-between items-start mb-6">
+                            <div>
+                                <h3 class="text-2xl font-bold text-gray-800">メンテナンス予約</h3>
+                                <p class="text-sm text-gray-500 mt-1">担当者: ${currentUser.name}</p>
+                            </div>
+                            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
+                        </div>
+                        
+                        <div class="space-y-4 mb-6">
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-2">予約日</label>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <button id="date-today" onclick="selectDate('today')" class="py-3 px-4 rounded-xl font-bold transition-all bg-green-600 text-white shadow-lg">本日</button>
+                                    <button id="date-tomorrow" onclick="selectDate('tomorrow')" class="py-3 px-4 rounded-xl font-bold transition-all bg-gray-100 text-gray-600 hover:bg-gray-200">明日</button>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-2">開始時刻</label>
+                                <input type="time" id="start-time" onchange="handleStartTimeChange()" class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none text-lg font-semibold">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 mb-2">終了時刻</label>
+                                <input type="time" id="end-time" onchange="updateDuration()" class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none text-lg font-semibold">
+                            </div>
+                            
+                            <div id="duration-display" class="hidden bg-green-50 border border-green-200 rounded-xl p-3">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm text-green-700 font-medium">所要時間</span>
+                                    <span id="duration-text" class="text-lg font-bold text-green-800"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-3">
+                            <button onclick="handleBooking()" class="w-full bg-gradient-to-r from-green-600 to-green-700 text-white py-4 rounded-xl font-bold hover:from-green-700 hover:to-green-800 transition-all shadow-lg">予約する</button>
+                            <button onclick="closeModal()" class="w-full bg-gray-200 text-gray-700 py-4 rounded-xl font-bold hover:bg-gray-300 transition-all">キャンセル</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function openMaintenanceDetail(eventId) {
+            const event = scheduleData.find(function(e) { return e.id === eventId; });
+            if (!event) return;
+            
+            const isCompleted = event.status === 'completed';
+            const gradientColor = isCompleted ? 'from-green-500 to-green-600' : 'from-purple-500 to-purple-600';
+            
+            const modal = document.getElementById('modal');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-60 flex items-end justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-t-3xl w-full max-w-md animate-slide-up shadow-2xl">
+                    <div class="h-2 rounded-t-3xl bg-gradient-to-r ${gradientColor}"></div>
+                    <div class="p-6">
+                        <div class="flex justify-between items-start mb-6">
+                            <div>
+                                <h3 class="text-2xl font-bold text-gray-800">メンテナンス予約詳細</h3>
+                                <p class="text-sm text-gray-500 mt-1">${isCompleted ? '完了済み' : '予約済み'}</p>
+                            </div>
+                            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
+                        </div>
+                        
+                        <div class="space-y-3 mb-6">
+                            <div class="flex justify-between items-center py-3 border-b border-gray-200">
+                                <span class="text-gray-600 font-medium">メンテナンス時間</span>
+                                <span class="font-bold text-gray-800">${event.startTime} - ${event.endTime}</span>
+                            </div>
+                            <div class="flex justify-between items-center py-3 border-b border-gray-200">
+                                <span class="text-gray-600 font-medium">担当者</span>
+                                <span class="font-bold text-gray-800">${event.cleanerName || '未設定'}</span>
+                            </div>
+                            <div class="flex justify-between items-center py-3 border-b border-gray-200">
+                                <span class="text-gray-600 font-medium">ステータス</span>
+                                <span class="px-4 py-1 rounded-full text-xs font-bold ${isCompleted ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}">
+                                    ${isCompleted ? '✓ 完了' : '予約済'}
+                                </span>
+                            </div>
+                            ${event.notes ? `
+                            <div class="py-3 border-b border-gray-200">
+                                <span class="text-gray-600 font-medium block mb-2">備考</span>
+                                <span class="text-gray-800">${event.notes}</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                        
+                        ${!isCompleted ? `
+                        <div class="space-y-3">
+                            <button onclick="completeMaintenance('${eventId}')" class="w-full bg-gradient-to-r from-green-600 to-green-700 text-white py-4 rounded-xl font-bold hover:from-green-700 hover:to-green-800 transition-all shadow-lg">
+                                ✓ メンテナンス完了を報告
+                            </button>
+                            <button onclick="confirmCancel('${eventId}')" class="w-full bg-red-500 text-white py-4 rounded-xl font-bold hover:bg-red-600 transition-all">
+                                予約をキャンセル
+                            </button>
+                        </div>
+                        ` : `
+                        <div class="text-center py-6">
+                            <div class="bg-green-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-3">
+                                <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </div>
+                            <p class="text-green-600 font-bold text-lg">メンテナンス完了済み</p>
+                        </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function closeModal() {
+            document.getElementById('modal').className = 'hidden';
+            document.getElementById('modal').innerHTML = '';
+        }
+        
+        // ========================================
+        // ヘルパー関数
+        // ========================================
+        function selectDate(date) {
+            selectedBookingDate = date;
+            document.getElementById('date-today').className = date === 'today' 
+                ? 'py-3 px-4 rounded-xl font-bold transition-all bg-green-600 text-white shadow-lg'
+                : 'py-3 px-4 rounded-xl font-bold transition-all bg-gray-100 text-gray-600 hover:bg-gray-200';
+            document.getElementById('date-tomorrow').className = date === 'tomorrow'
+                ? 'py-3 px-4 rounded-xl font-bold transition-all bg-green-600 text-white shadow-lg'
+                : 'py-3 px-4 rounded-xl font-bold transition-all bg-gray-100 text-gray-600 hover:bg-gray-200';
+        }
+        
+        function handleStartTimeChange() {
+            const startTime = document.getElementById('start-time').value;
+            if (!startTime) return;
+            
+            const parts = startTime.split(':');
+            let hours = parseInt(parts[0]);
+            let minutes = parseInt(parts[1]);
+            let endHour = hours;
+            let endMin = minutes + 30;
+            
+            if (endMin >= 60) {
+                endHour += 1;
+                endMin -= 60;
+            }
+            if (endHour >= 24) {
+                endHour = 23;
+                endMin = 59;
+            }
+            
+            const endTime = String(endHour).padStart(2, '0') + ':' + String(endMin).padStart(2, '0');
+            document.getElementById('end-time').value = endTime;
+            updateDuration();
+        }
+        
+        function updateDuration() {
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+            
+            if (startTime && endTime) {
+                const duration = calculateDuration(startTime, endTime);
+                document.getElementById('duration-display').className = 'bg-green-50 border border-green-200 rounded-xl p-3';
+                document.getElementById('duration-text').textContent = duration + '分';
+            }
+        }
+        
+        function handleBooking() {
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+            
+            if (!startTime || !endTime) {
+                alert('開始時刻と終了時刻を入力してください');
+                return;
+            }
+            
+            const duration = calculateDuration(startTime, endTime);
+            if (duration <= 0) {
+                alert('終了時刻は開始時刻より後にしてください');
+                return;
+            }
+            
+            createMaintenance(selectedBookingDate, startTime, endTime);
+        }
+        
+        function confirmCancel(eventId) {
+            if (confirm('本当にキャンセルしますか？')) {
+                cancelMaintenance(eventId);
+            }
+        }
+        
+        function switchTab(tab) {
+            loadSchedule(tab);
+        }
+        
+        function calculateDuration(start, end) {
+            const startParts = start.split(':');
+            const endParts = end.split(':');
+            const startHour = parseInt(startParts[0]);
+            const startMin = parseInt(startParts[1]);
+            const endHour = parseInt(endParts[0]);
+            const endMin = parseInt(endParts[1]);
+            return (endHour * 60 + endMin) - (startHour * 60 + startMin);
+        }
+        
+        function getTodayText() {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = today.getMonth() + 1;
+            const day = today.getDate();
+            const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+            const dayName = dayNames[today.getDay()];
+            return year + '年' + month + '月' + day + '日（' + dayName + '）';
+        }
+        
+        function getTomorrowText() {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const year = tomorrow.getFullYear();
+            const month = tomorrow.getMonth() + 1;
+            const day = tomorrow.getDate();
+            const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+            const dayName = dayNames[tomorrow.getDay()];
+            return year + '年' + month + '月' + day + '日（' + dayName + '）';
+        }
+        
+        function showLoading() {
+            const content = document.getElementById('content-area');
+            if (content) {
+                content.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="loading-spinner mx-auto mb-4"></div>
+                        <p class="text-gray-600">処理中...</p>
+                    </div>
+                `;
+            }
+        }
+        
+        function showError(message) {
+            alert(message);
+            loadSchedule(currentDate);
+        }
+        
+        // ========================================
+        // アプリ起動
+        // ========================================
+        window.onload = function() {
+            init();
+        };
+    </script>
+</body>
+</html>
