@@ -169,52 +169,30 @@ function createMaintenance(dateType, startTime, endTime, cleanerName) {
 // ====================================
 
 function checkTimeConflict(startDateTime, endDateTime) {
-  const dayStart = new Date(startDateTime);
-  dayStart.setHours(0, 0, 0, 0);
-  
-  const dayEnd = new Date(startDateTime);
-  dayEnd.setHours(23, 59, 59, 999);
-  
   // お客様予約との重複チェック
   const customerCalendar = CalendarApp.getCalendarById(CONFIG.CUSTOMER_CALENDAR_ID);
-  const customerEvents = customerCalendar.getEvents(dayStart, dayEnd);
+  const customerEvents = customerCalendar.getEvents(startDateTime, endDateTime);
   
-  for (var i = 0; i < customerEvents.length; i++) {
-    const event = customerEvents[i];
-    const eventStart = event.getStartTime().getTime();
-    const eventEnd = event.getEndTime().getTime();
-    const newStart = startDateTime.getTime();
-    const newEnd = endDateTime.getTime();
-    
-    // 重複判定: 新しい予約の開始時刻が既存予約の終了時刻より前 AND 新しい予約の終了時刻が既存予約の開始時刻より後
-    if (newStart < eventEnd && newEnd > eventStart) {
-      return {
-        message: 'お客様予約と重複しています（' + 
-                 formatTime(event.getStartTime()) + '-' + 
-                 formatTime(event.getEndTime()) + '）'
-      };
-    }
+  if (customerEvents.length > 0) {
+    const conflictEvent = customerEvents[0];
+    return {
+      message: 'お客様予約と重複しています（' + 
+               formatTime(conflictEvent.getStartTime()) + '-' + 
+               formatTime(conflictEvent.getEndTime()) + '）'
+    };
   }
   
   // 既存のメンテナンス予約との重複チェック
   const maintenanceCalendar = CalendarApp.getCalendarById(CONFIG.MAINTENANCE_CALENDAR_ID);
-  const maintenanceEvents = maintenanceCalendar.getEvents(dayStart, dayEnd);
+  const maintenanceEvents = maintenanceCalendar.getEvents(startDateTime, endDateTime);
   
-  for (var j = 0; j < maintenanceEvents.length; j++) {
-    const event = maintenanceEvents[j];
-    const eventStart = event.getStartTime().getTime();
-    const eventEnd = event.getEndTime().getTime();
-    const newStart = startDateTime.getTime();
-    const newEnd = endDateTime.getTime();
-    
-    // 重複判定
-    if (newStart < eventEnd && newEnd > eventStart) {
-      return {
-        message: 'すでにメンテナンス予約が入っています（' + 
-                 formatTime(event.getStartTime()) + '-' + 
-                 formatTime(event.getEndTime()) + '）'
-      };
-    }
+  if (maintenanceEvents.length > 0) {
+    const conflictEvent = maintenanceEvents[0];
+    return {
+      message: 'すでにメンテナンス予約が入っています（' + 
+               formatTime(conflictEvent.getStartTime()) + '-' + 
+               formatTime(conflictEvent.getEndTime()) + '）'
+    };
   }
   
   return null;
