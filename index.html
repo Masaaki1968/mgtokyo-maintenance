@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#16a34a">
     <title>メンテナンス時間管理 - MGTOKYO品川</title>
-    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @keyframes slideUp {
@@ -43,51 +45,150 @@
         // 設定
         // ========================================
         const CONFIG = {
-            LIFF_ID: '2008289023-B3YVDEkQ',
-            GAS_API_URL: 'https://script.google.com/macros/s/AKfycbyEWm7vORtbq7MqUdb-DFITvfT_lxwaaH9n_g7li1Exdx7IqSsNjQEZdTtQ-v11pJKm/exec'
+            GAS_API_URL: 'https://script.google.com/macros/s/AKfycbyEWm7vORtbq7MqUdb-DFITvfT_lxwaaH9n_g7li1Exdx7IqSsNjQEZdTtQ-v11pJKm/exec',
+            // ユーザー情報
+            USERS: [
+                { username: 'kibousen', password: 'kibousen2024', name: '希望泉' },
+                { username: 'staff2', password: 'staff2024', name: 'スタッフ2' },
+                { username: 'admin', password: 'mgtokyo2024', name: '管理者' }
+            ]
         };
         
         // グローバル変数
-        let userProfile = null;
+        let currentUser = null;
         let currentDate = 'today';
         let scheduleData = [];
         let selectedBookingDate = 'today';
         
         // ========================================
-        // LIFF初期化
+        // 初期化
         // ========================================
-        async function initLiff() {
-            try {
-                console.log('LIFF初期化開始...');
-                await liff.init({ liffId: CONFIG.LIFF_ID });
-                console.log('LIFF初期化完了');
-                
-                if (!liff.isLoggedIn()) {
-                    console.log('未ログイン - ログイン画面へリダイレクト');
-                    liff.login();
-                    return;
-                }
-                
-                userProfile = await liff.getProfile();
-                console.log('ログイン成功:', userProfile.displayName);
-                
+        function init() {
+            console.log('アプリ初期化開始...');
+            checkLogin();
+        }
+        
+        // ========================================
+        // ログイン確認
+        // ========================================
+        function checkLogin() {
+            const savedUser = localStorage.getItem('currentUser');
+            if (savedUser) {
+                currentUser = JSON.parse(savedUser);
+                console.log('ログイン済み:', currentUser.name);
                 renderApp();
-                await loadSchedule('today');
-                
-            } catch (error) {
-                console.error('LIFF初期化エラー:', error);
-                document.getElementById('app').innerHTML = `
-                    <div class="flex items-center justify-center min-h-screen p-4">
-                        <div class="text-center">
-                            <svg class="w-16 h-16 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                loadSchedule('today');
+            } else {
+                console.log('未ログイン - ログイン画面を表示');
+                renderLoginScreen();
+            }
+        }
+        
+        // ========================================
+        // ログイン画面
+        // ========================================
+        function renderLoginScreen() {
+            document.getElementById('app').innerHTML = `
+                <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-green-50 to-green-100">
+                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                        <!-- ヘッダー -->
+                        <div class="bg-gradient-to-r from-green-600 to-green-700 text-white p-8 text-center">
+                            <svg class="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
                             </svg>
-                            <p class="text-red-600 font-bold mb-2">エラーが発生しました</p>
-                            <p class="text-gray-600 text-sm">LINEアプリから開き直してください</p>
-                            <p class="text-gray-500 text-xs mt-4">${error.message}</p>
+                            <h1 class="text-2xl font-bold">メンテナンス時間管理</h1>
+                            <p class="text-green-100 text-sm mt-2">MGTOKYO品川</p>
+                        </div>
+                        
+                        <!-- ログインフォーム -->
+                        <div class="p-8">
+                            <h2 class="text-xl font-bold text-gray-800 mb-6 text-center">ログイン</h2>
+                            
+                            <div id="login-error" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+                            </div>
+                            
+                            <form onsubmit="handleLogin(event)" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700 mb-2">ユーザー名</label>
+                                    <input 
+                                        type="text" 
+                                        id="username" 
+                                        required
+                                        autocomplete="username"
+                                        class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none text-base"
+                                        placeholder="ユーザー名を入力"
+                                    >
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-700 mb-2">パスワード</label>
+                                    <input 
+                                        type="password" 
+                                        id="password" 
+                                        required
+                                        autocomplete="current-password"
+                                        class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none text-base"
+                                        placeholder="パスワードを入力"
+                                    >
+                                </div>
+                                
+                                <button 
+                                    type="submit" 
+                                    class="w-full bg-gradient-to-r from-green-600 to-green-700 text-white py-4 rounded-xl font-bold hover:from-green-700 hover:to-green-800 transition-all shadow-lg hover:shadow-xl"
+                                >
+                                    ログイン
+                                </button>
+                            </form>
+                            
+                            <!-- テストアカウント情報 -->
+                            <div class="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <p class="text-xs text-gray-600 font-bold mb-2">ログインアカウント</p>
+                                <div class="text-xs text-gray-600 space-y-1">
+                                    <p>清掃員1: kibousen / kibousen2024</p>
+                                    <p>清掃員2: staff2 / staff2024</p>
+                                    <p>管理者: admin / mgtokyo2024</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                `;
+                </div>
+            `;
+        }
+        
+        // ========================================
+        // ログイン処理
+        // ========================================
+        function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            
+            const user = CONFIG.USERS.find(function(u) {
+                return u.username === username && u.password === password;
+            });
+            
+            if (user) {
+                currentUser = { username: user.username, name: user.name };
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                console.log('ログイン成功:', currentUser.name);
+                renderApp();
+                loadSchedule('today');
+            } else {
+                const errorDiv = document.getElementById('login-error');
+                errorDiv.textContent = 'ユーザー名またはパスワードが正しくありません';
+                errorDiv.className = 'bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm';
+            }
+        }
+        
+        // ========================================
+        // ログアウト
+        // ========================================
+        function handleLogout() {
+            if (confirm('ログアウトしますか？')) {
+                localStorage.removeItem('currentUser');
+                currentUser = null;
+                renderLoginScreen();
             }
         }
         
@@ -123,7 +224,7 @@
             try {
                 showLoading();
                 
-                console.log('メンテナンス予約作成:', { dateType, startTime, endTime });
+                console.log('メンテナンス予約作成:', { dateType, startTime, endTime, user: currentUser.name });
                 const response = await fetch(CONFIG.GAS_API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
@@ -131,7 +232,8 @@
                         action: 'createMaintenance',
                         date: dateType,
                         startTime: startTime,
-                        endTime: endTime
+                        endTime: endTime,
+                        cleanerName: currentUser.name
                     })
                 });
                 
@@ -240,6 +342,17 @@
                         </div>
                         <div class="bg-white bg-opacity-20 rounded-lg p-3 backdrop-blur-sm">
                             <div class="flex items-center justify-between text-sm">
+                                <div class="flex items-center space-x-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                                    </svg>
+                                    <span class="font-medium">${currentUser.name}</span>
+                                </div>
+                                <button onclick="handleLogout()" class="text-xs bg-white bg-opacity-20 px-3 py-1 rounded-full hover:bg-opacity-30 transition-all">
+                                    ログアウト
+                                </button>
+                            </div>
+                            <div class="flex items-center justify-between text-sm mt-2 pt-2 border-t border-white border-opacity-20">
                                 <span>現在時刻</span>
                                 <span class="text-lg font-bold">${currentTime}</span>
                             </div>
@@ -385,7 +498,7 @@
                         <div class="flex justify-between items-start mb-6">
                             <div>
                                 <h3 class="text-2xl font-bold text-gray-800">メンテナンス予約</h3>
-                                <p class="text-sm text-gray-500 mt-1">メンテナンス時間を入力してください</p>
+                                <p class="text-sm text-gray-500 mt-1">担当者: ${currentUser.name}</p>
                             </div>
                             <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
                         </div>
@@ -627,7 +740,7 @@
         // アプリ起動
         // ========================================
         window.onload = function() {
-            initLiff();
+            init();
         };
     </script>
 </body>
