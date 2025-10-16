@@ -46,7 +46,6 @@
         // ========================================
         const CONFIG = {
             GAS_API_URL: 'https://script.google.com/macros/s/AKfycbyEWm7vORtbq7MqUdb-DFITvfT_lxwaaH9n_g7li1Exdx7IqSsNjQEZdTtQ-v11pJKm/exec',
-            // ユーザー情報
             USERS: [
                 { username: 'kibousen', password: 'kibousen2024', name: 'takako-san' },
                 { username: 'staff2', password: 'staff2024', name: 'スタッフ2' },
@@ -59,6 +58,7 @@
         let currentDate = 'today';
         let scheduleData = [];
         let selectedBookingDate = 'today';
+        let cleaningHistory = [];
         
         // ========================================
         // 初期化
@@ -91,7 +91,6 @@
             document.getElementById('app').innerHTML = `
                 <div class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-green-50 to-green-100">
                     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-                        <!-- ヘッダー -->
                         <div class="bg-gradient-to-r from-green-600 to-green-700 text-white p-8 text-center">
                             <svg class="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
@@ -100,7 +99,6 @@
                             <p class="text-green-100 text-sm mt-2">MGTOKYO品川</p>
                         </div>
                         
-                        <!-- ログインフォーム -->
                         <div class="p-8">
                             <h2 class="text-xl font-bold text-gray-800 mb-6 text-center">ログイン</h2>
                             
@@ -208,6 +206,30 @@
         }
         
         // ========================================
+        // 清掃履歴読み込み
+        // ========================================
+        async function loadCleaningHistory(days) {
+            try {
+                showLoading();
+                
+                console.log('清掃履歴取得開始:', days + '日分');
+                const response = await fetch(CONFIG.GAS_API_URL + '?action=getCleaningHistory&days=' + days);
+                const data = await response.json();
+                console.log('清掃履歴取得完了:', data);
+                
+                if (data.success) {
+                    cleaningHistory = data.history;
+                    renderCleaningHistory(data.history);
+                } else {
+                    throw new Error('清掃履歴の取得に失敗しました');
+                }
+            } catch (error) {
+                console.error('清掃履歴取得エラー:', error);
+                showError('清掃履歴の取得に失敗しました: ' + error.message);
+            }
+        }
+        
+        // ========================================
         // メンテナンス予約作成
         // ========================================
         async function createMaintenance(dateType, startTime, endTime) {
@@ -240,39 +262,6 @@
             } catch (error) {
                 console.error('予約作成エラー:', error);
                 showError('予約の作成に失敗しました: ' + error.message);
-            }
-        }
-        
-        // ========================================
-        // メンテナンス完了
-        // ========================================
-        async function completeMaintenance(eventId) {
-            try {
-                showLoading();
-                
-                console.log('メンテナンス完了:', eventId);
-                const response = await fetch(CONFIG.GAS_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({
-                        action: 'completeMaintenance',
-                        eventId: eventId
-                    })
-                });
-                
-                const data = await response.json();
-                console.log('完了報告完了:', data);
-                
-                if (data.success) {
-                    alert('メンテナンス完了を報告しました');
-                    await loadSchedule(currentDate);
-                    closeModal();
-                } else {
-                    throw new Error(data.error || '完了報告に失敗しました');
-                }
-            } catch (error) {
-                console.error('完了報告エラー:', error);
-                showError('完了報告に失敗しました: ' + error.message);
             }
         }
         
@@ -393,6 +382,15 @@
                     </div>
                     ${dateType === 'tomorrow' ? '<div class="absolute bottom-0 left-0 right-0 h-1 bg-green-600 rounded-t"></div>' : ''}
                 </button>
+                <button onclick="switchTab('history')" class="flex-1 py-3 text-center font-bold transition-all relative ${dateType === 'history' ? 'text-green-600' : 'text-gray-400'}">
+                    <div class="flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span class="text-sm">履歴</span>
+                    </div>
+                    ${dateType === 'history' ? '<div class="absolute bottom-0 left-0 right-0 h-1 bg-green-600 rounded-t"></div>' : ''}
+                </button>
             `;
             
             document.getElementById('date-tabs').innerHTML = tabs;
@@ -433,27 +431,17 @@
                             </div>
                         `;
                     } else if (slot.type === 'cleaning') {
-                        const isCompleted = slot.status === 'completed';
-                        const bgColor = isCompleted ? 'bg-green-100 border-green-300' : 'bg-purple-100 border-purple-300';
-                        const textColor = isCompleted ? 'text-green-700' : 'text-purple-700';
-                        const textColor900 = isCompleted ? 'text-green-900' : 'text-purple-900';
-                        const textColor800 = isCompleted ? 'text-green-800' : 'text-purple-800';
-                        const badgeColor = isCompleted ? 'bg-green-200 text-green-800' : 'bg-purple-200 text-purple-800';
-                        
                         html += `
-                            <div onclick="openMaintenanceDetail('${slot.id}')" class="${bgColor} border-2 rounded-lg p-4 shadow-sm cursor-pointer hover:shadow-md transition-all">
+                            <div onclick="openMaintenanceDetail('${slot.id}')" class="bg-purple-100 border-2 border-purple-300 rounded-lg p-4 shadow-sm cursor-pointer hover:shadow-md transition-all">
                                 <div class="flex items-center justify-between mb-2">
                                     <div class="flex items-center space-x-2">
-                                        <svg class="w-5 h-5 ${textColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <svg class="w-5 h-5 text-purple-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
                                         </svg>
-                                        <span class="font-bold ${textColor900}">メンテナンス予約</span>
+                                        <span class="font-bold text-purple-900">メンテナンス予約</span>
                                     </div>
-                                    <span class="text-xs px-3 py-1 rounded-full font-bold ${badgeColor}">
-                                        ${isCompleted ? '✓ 完了' : '予約済'}
-                                    </span>
                                 </div>
-                                <div class="flex items-center space-x-2 mb-2 ${textColor800}">
+                                <div class="flex items-center space-x-2 mb-2 text-purple-800">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
@@ -471,6 +459,102 @@
             }
             
             html += '</div>';
+            document.getElementById('content-area').innerHTML = html;
+        }
+        
+        function renderCleaningHistory(history) {
+            const tabs = `
+                <button onclick="switchTab('today')" class="flex-1 py-3 text-center font-bold transition-all relative text-gray-400">
+                    <div class="flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-sm">${getTodayText()}</span>
+                    </div>
+                </button>
+                <button onclick="switchTab('tomorrow')" class="flex-1 py-3 text-center font-bold transition-all relative text-gray-400">
+                    <div class="flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-sm">${getTomorrowText()}</span>
+                    </div>
+                </button>
+                <button onclick="switchTab('history')" class="flex-1 py-3 text-center font-bold transition-all relative text-green-600">
+                    <div class="flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span class="text-sm">履歴</span>
+                    </div>
+                    <div class="absolute bottom-0 left-0 right-0 h-1 bg-green-600 rounded-t"></div>
+                </button>
+            `;
+            
+            document.getElementById('date-tabs').innerHTML = tabs;
+            
+            let html = '<div class="mb-4 flex items-center justify-between">';
+            html += '<h2 class="text-xl font-bold text-gray-800">清掃実施記録</h2>';
+            html += '<select onchange="loadCleaningHistory(this.value)" class="px-3 py-2 border-2 border-gray-300 rounded-lg text-sm font-medium focus:border-green-500 focus:outline-none">';
+            html += '<option value="7">過去7日間</option>';
+            html += '<option value="30" selected>過去30日間</option>';
+            html += '<option value="90">過去90日間</option>';
+            html += '</select>';
+            html += '</div>';
+            
+            if (history.length === 0) {
+                html += `
+                    <div class="text-center py-16">
+                        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <p class="text-gray-400 font-medium">清掃記録がありません</p>
+                    </div>
+                `;
+            } else {
+                html += '<div class="space-y-3">';
+                
+                let currentDate = '';
+                history.forEach(function(record) {
+                    if (record.date !== currentDate) {
+                        currentDate = record.date;
+                        html += `
+                            <div class="bg-gray-100 px-4 py-2 rounded-lg mt-4 first:mt-0">
+                                <span class="text-sm font-bold text-gray-700">${record.dateDisplay}</span>
+                            </div>
+                        `;
+                    }
+                    
+                    const duration = calculateDuration(record.startTime, record.endTime);
+                    
+                    html += `
+                        <div class="bg-white border-2 border-gray-200 rounded-lg p-4 shadow-sm">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center space-x-2">
+                                    <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                    </svg>
+                                    <span class="font-bold text-gray-900">メンテナンス完了</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-2 mb-2 text-gray-700">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                <span class="font-bold">${record.startTime} - ${record.endTime}</span>
+                                <span class="text-sm">(${duration}分)</span>
+                            </div>
+                            <div class="text-xs text-gray-600">
+                                担当: ${record.cleanerName}
+                                ${record.notes ? ' / ' + record.notes : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+            }
+            
             document.getElementById('content-area').innerHTML = html;
         }
         
@@ -533,19 +617,15 @@
             const event = scheduleData.find(function(e) { return e.id === eventId; });
             if (!event) return;
             
-            const isCompleted = event.status === 'completed';
-            const gradientColor = isCompleted ? 'from-green-500 to-green-600' : 'from-purple-500 to-purple-600';
-            
             const modal = document.getElementById('modal');
             modal.className = 'fixed inset-0 bg-black bg-opacity-60 flex items-end justify-center z-50';
             modal.innerHTML = `
                 <div class="bg-white rounded-t-3xl w-full max-w-md animate-slide-up shadow-2xl">
-                    <div class="h-2 rounded-t-3xl bg-gradient-to-r ${gradientColor}"></div>
+                    <div class="h-2 rounded-t-3xl bg-gradient-to-r from-purple-500 to-purple-600"></div>
                     <div class="p-6">
                         <div class="flex justify-between items-start mb-6">
                             <div>
                                 <h3 class="text-2xl font-bold text-gray-800">メンテナンス予約詳細</h3>
-                                <p class="text-sm text-gray-500 mt-1">${isCompleted ? '完了済み' : '予約済み'}</p>
                             </div>
                             <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
                         </div>
@@ -559,12 +639,6 @@
                                 <span class="text-gray-600 font-medium">担当者</span>
                                 <span class="font-bold text-gray-800">${event.cleanerName || '未設定'}</span>
                             </div>
-                            <div class="flex justify-between items-center py-3 border-b border-gray-200">
-                                <span class="text-gray-600 font-medium">ステータス</span>
-                                <span class="px-4 py-1 rounded-full text-xs font-bold ${isCompleted ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}">
-                                    ${isCompleted ? '✓ 完了' : '予約済'}
-                                </span>
-                            </div>
                             ${event.notes ? `
                             <div class="py-3 border-b border-gray-200">
                                 <span class="text-gray-600 font-medium block mb-2">備考</span>
@@ -573,25 +647,11 @@
                             ` : ''}
                         </div>
                         
-                        ${!isCompleted ? `
                         <div class="space-y-3">
-                            <button onclick="completeMaintenance('${eventId}')" class="w-full bg-gradient-to-r from-green-600 to-green-700 text-white py-4 rounded-xl font-bold hover:from-green-700 hover:to-green-800 transition-all shadow-lg">
-                                ✓ メンテナンス完了を報告
-                            </button>
                             <button onclick="confirmCancel('${eventId}')" class="w-full bg-red-500 text-white py-4 rounded-xl font-bold hover:bg-red-600 transition-all">
                                 予約をキャンセル
                             </button>
                         </div>
-                        ` : `
-                        <div class="text-center py-6">
-                            <div class="bg-green-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-3">
-                                <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                            </div>
-                            <p class="text-green-600 font-bold text-lg">メンテナンス完了済み</p>
-                        </div>
-                        `}
                     </div>
                 </div>
             `;
@@ -675,7 +735,12 @@
         }
         
         function switchTab(tab) {
-            loadSchedule(tab);
+            if (tab === 'history') {
+                currentDate = 'history';
+                loadCleaningHistory(30);
+            } else {
+                loadSchedule(tab);
+            }
         }
         
         function calculateDuration(start, end) {
@@ -690,23 +755,17 @@
         
         function getTodayText() {
             const today = new Date();
-            const year = today.getFullYear();
             const month = today.getMonth() + 1;
             const day = today.getDate();
-            const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
-            const dayName = dayNames[today.getDay()];
-            return year + '年' + month + '月' + day + '日（' + dayName + '）';
+            return month + '/' + day;
         }
         
         function getTomorrowText() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
-            const year = tomorrow.getFullYear();
             const month = tomorrow.getMonth() + 1;
             const day = tomorrow.getDate();
-            const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
-            const dayName = dayNames[tomorrow.getDay()];
-            return year + '年' + month + '月' + day + '日（' + dayName + '）';
+            return month + '/' + day;
         }
         
         function showLoading() {
@@ -723,7 +782,11 @@
         
         function showError(message) {
             alert(message);
-            loadSchedule(currentDate);
+            if (currentDate === 'history') {
+                loadCleaningHistory(30);
+            } else {
+                loadSchedule(currentDate);
+            }
         }
         
         // ========================================
