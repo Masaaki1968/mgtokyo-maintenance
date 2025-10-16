@@ -493,6 +493,11 @@
             
             document.getElementById('date-tabs').innerHTML = tabs;
             
+            // キャンセルされた予約を除外
+            const validHistory = history.filter(function(record) {
+                return record.notes !== 'キャンセル';
+            });
+            
             let html = '<div class="mb-4 flex items-center justify-between">';
             html += '<h2 class="text-xl font-bold text-gray-800">清掃実施記録</h2>';
             html += '<select onchange="loadCleaningHistory(this.value)" class="px-3 py-2 border-2 border-gray-300 rounded-lg text-sm font-medium focus:border-green-500 focus:outline-none">';
@@ -502,7 +507,7 @@
             html += '</select>';
             html += '</div>';
             
-            if (history.length === 0) {
+            if (validHistory.length === 0) {
                 html += `
                     <div class="text-center py-16">
                         <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -515,7 +520,7 @@
                 html += '<div class="space-y-3">';
                 
                 let currentDate = '';
-                history.forEach(function(record) {
+                validHistory.forEach(function(record) {
                     if (record.date !== currentDate) {
                         currentDate = record.date;
                         html += `
@@ -546,7 +551,6 @@
                             </div>
                             <div class="text-xs text-gray-600">
                                 担当: ${record.cleanerName}
-                                ${record.notes ? ' / ' + record.notes : ''}
                             </div>
                         </div>
                     `;
